@@ -77,19 +77,12 @@ Page {
         model: rooms
         width: parent.width
         height: parent.height - textEntry.height
-
         anchors.fill: parent
-
         clip: true
-        currentIndex: -1
-
         header: PageHeader {
             title: "Rooms"
             GlassItem {
-                color: connectionActive ? "green" : "red"
-                //falloffRadius: Math.exp(fpixw.value)
-                //radius: Math.exp(pixw.value)
-                cache: false
+                color: connectionActive? "green": "red"
                 anchors.verticalCenter: parent.verticalCenter
             }
 
@@ -107,10 +100,6 @@ Page {
         delegate: ListItem {
             width: parent.width
             contentHeight: Theme.itemSizeSmall
-
-
-            //highlighted: (roomListView.currentIndex == index)
-
 
             Label {
                 id: roomLabel
@@ -133,11 +122,6 @@ Page {
             }
 
         }
-
-        /*onCountChanged: if(initialised) {
-            roomListView.currentIndex = count-1
-            enterRoom(rooms.roomAt(count-1))
-          }*/
     }
 
     TextField {
@@ -153,10 +137,5 @@ Page {
         enterRoom.connect(roomView.setRoom)
         joinRoom.connect(connection.joinRoom)
     }
-    /*onStatusChanged: {
-        if (status === PageStatus.Active && pageStack.depth >= 1) {
-            pageStack.pushAttached(roomView)
-        }
-    }*/
 }
 

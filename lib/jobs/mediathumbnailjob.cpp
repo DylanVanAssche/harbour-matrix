@@ -18,63 +18,46 @@
 
 #include "mediathumbnailjob.h"
 
-#include <QtCore/QDebug>
-
 using namespace QMatrixClient;
 
-class MediaThumbnailJob::Private
+QUrl MediaThumbnailJob::makeRequestUrl(QUrl baseUrl,
+                                       const QUrl& mxcUri, QSize requestedSize)
 {
-    public:
-        QUrl url;
-        QPixmap thumbnail;
-        int requestedHeight;
-        int requestedWidth;
-        ThumbnailType thumbnailType;
-};
-
-MediaThumbnailJob::MediaThumbnailJob(ConnectionData* data, QUrl url, int requestedWidth, int requestedHeight,
-                                     ThumbnailType thumbnailType)
-    : BaseJob(data, JobHttpType::GetJob, "MediaThumbnailJob")
-    , d(new Private)
-{
-    d->url = url;
-    d->requestedHeight = requestedHeight;
-    d->requestedWidth = requestedWidth;
-    d->thumbnailType = thumbnailType;
+    return makeRequestUrl(baseUrl, mxcUri.authority(), mxcUri.path().mid(1),
+                          requestedSize.width(), requestedSize.height());
 }
 
-MediaThumbnailJob::~MediaThumbnailJob()
+MediaThumbnailJob::MediaThumbnailJob(const QString& serverName,
+                                     const QString& mediaId, QSize requestedSize)
+    : GetContentThumbnailJob(serverName, mediaId,
+                             requestedSize.width(), requestedSize.height())
+{ }
+
+MediaThumbnailJob::MediaThumbnailJob(const QUrl& mxcUri, QSize requestedSize)
+    : GetContentThumbnailJob(mxcUri.authority(),
+                             mxcUri.path().mid(1), // sans leading '/'
+                             requestedSize.width(), requestedSize.height())
+{ }
+
+QImage MediaThumbnailJob::thumbnail() const
 {
-    delete d;
+    return _thumbnail;
 }
 
-QPixmap MediaThumbnailJob::thumbnail()
+QImage MediaThumbnailJob::scaledThumbnail(QSize toSize) const
 {
-    return d->thumbnail;
+    return _thumbnail.scaled(toSize,
+                             Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
 
-QString MediaThumbnailJob::apiPath() const
+BaseJob::Status MediaThumbnailJob::parseReply(QNetworkReply* reply)
 {
-    return QString("/_matrix/media/v1/thumbnail/%1%2").arg(d->url.host()).arg(d->url.path());
-}
+    auto result = GetContentThumbnailJob::parseReply(reply);
+    if (!result.good())
+        return result;
 
-QUrlQuery MediaThumbnailJob::query() const
-{
-    QUrlQuery query;
-    query.addQueryItem("width", QString::number(d->requestedWidth));
-    query.addQueryItem("height", QString::number(d->requestedHeight));
-    if( d->thumbnailType == ThumbnailType::Scale )
-        query.addQueryItem("method", "scale");
-    else
-        query.addQueryItem("method", "crop");
-    return query;
-}
+    if( _thumbnail.loadFromData(content()->readAll()) )
+        return Success;
 
-BaseJob::Status MediaThumbnailJob::parseReply(QByteArray data)
-{
-    if( !d->thumbnail.loadFromData(data) )
-    {
-        qDebug() << "MediaThumbnailJob: could not read image data";
-    }
-    return Success;
+    return { IncorrectResponseError, "Could not read image data" };
 }

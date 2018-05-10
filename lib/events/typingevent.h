@@ -16,29 +16,24 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_TYPINGEVENT_H
-#define QMATRIXCLIENT_TYPINGEVENT_H
-
-#include <QtCore/QStringList>
+#pragma once
 
 #include "event.h"
+
+#include <QtCore/QStringList>
 
 namespace QMatrixClient
 {
     class TypingEvent: public Event
     {
         public:
-            TypingEvent();
-            virtual ~TypingEvent();
+            static constexpr const char* const TypeId = "m.typing";
 
-            QStringList users();
+            TypingEvent(const QJsonObject& obj);
 
-            static TypingEvent* fromJson(const QJsonObject& obj);
+            QStringList users() const { return _users; }
 
         private:
-            class Private;
-            Private* d;
+            QStringList _users;
     };
-}
-
-#endif // QMATRIXCLIENT_TYPINGEVENT_H
+}  // namespace QMatrixClient

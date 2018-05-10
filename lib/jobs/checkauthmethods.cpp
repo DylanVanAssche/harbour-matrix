@@ -18,26 +18,20 @@
 
 #include "checkauthmethods.h"
 
-#include <QtNetwork/QNetworkAccessManager>
-#include <QtNetwork/QNetworkReply>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
-#include <QtCore/QJsonParseError>
-
-#include "../connectiondata.h"
 
 using namespace QMatrixClient;
 
 class CheckAuthMethods::Private
 {
     public:
-        Private() {}
-        
         QString session;
 };
 
-CheckAuthMethods::CheckAuthMethods(ConnectionData* connection)
-    : BaseJob(connection, JobHttpType::GetJob, "CheckAuthMethods", false)
+CheckAuthMethods::CheckAuthMethods()
+    : BaseJob(HttpVerb::Get, "CheckAuthMethods",
+              QStringLiteral("_matrix/client/r0/login"), Query(), Data(), false)
     , d(new Private)
 {
 }
@@ -50,11 +44,6 @@ CheckAuthMethods::~CheckAuthMethods()
 QString CheckAuthMethods::session()
 {
     return d->session;
-}
-
-QString CheckAuthMethods::apiPath() const
-{
-    return "_matrix/client/r0/login";
 }
 
 BaseJob::Status CheckAuthMethods::parseJson(const QJsonDocument& data)

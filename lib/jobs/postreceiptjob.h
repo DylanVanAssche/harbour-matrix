@@ -16,27 +16,15 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_POSTRECEIPTJOB_H
-#define QMATRIXCLIENT_POSTRECEIPTJOB_H
+#pragma once
 
 #include "basejob.h"
 
 namespace QMatrixClient
 {
-    class Room;
     class PostReceiptJob: public BaseJob
     {
         public:
-            PostReceiptJob(ConnectionData* connection, QString roomId, QString eventId);
-            virtual ~PostReceiptJob();
-
-        protected:
-            QString apiPath() const override;
-
-        private:
-            class Private;
-            Private* d;
+            PostReceiptJob(const QString& roomId, const QString& eventId);
     };
 }
-
-#endif // QMATRIXCLIENT_POSTRECEIPTJOB_H

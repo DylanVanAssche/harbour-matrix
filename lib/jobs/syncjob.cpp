@@ -18,142 +18,92 @@
 
 #include "syncjob.h"
 
-#include <QtCore/QJsonDocument>
-#include <QtCore/QJsonObject>
-#include <QtCore/QJsonValue>
-#include <QtCore/QJsonArray>
-#include <QtCore/QDebug>
-
-#include "../room.h"
-#include "../connectiondata.h"
+#include <QtCore/QElapsedTimer>
 
 using namespace QMatrixClient;
 
-class SyncJob::Private
-{
-    public:
-        QString since;
-        QString filter;
-        bool fullState;
-        QString presence;
-        int timeout;
-        QString nextBatch;
-
-        SyncData roomData;
-};
-
 static size_t jobId = 0;
 
-SyncJob::SyncJob(ConnectionData* connection, QString since)
-    : BaseJob(connection, JobHttpType::GetJob, QString("SyncJob-%1").arg(++jobId))
-    , d(new Private)
+SyncJob::SyncJob(const QString& since, const QString& filter, int timeout,
+                 const QString& presence)
+    : BaseJob(HttpVerb::Get, QStringLiteral("SyncJob-%1").arg(++jobId),
+              QStringLiteral("_matrix/client/r0/sync"))
 {
-    d->since = since;
-    d->fullState = false;
-    d->timeout = -1;
-}
-
-SyncJob::~SyncJob()
-{
-    delete d;
-}
-
-void SyncJob::setFilter(QString filter)
-{
-    d->filter = filter;
-}
-
-void SyncJob::setFullState(bool full)
-{
-    d->fullState = full;
-}
-
-void SyncJob::setPresence(QString presence)
-{
-    d->presence = presence;
-}
-
-void SyncJob::setTimeout(int timeout)
-{
-    d->timeout = timeout;
-}
-
-QString SyncJob::nextBatch() const
-{
-    return d->nextBatch;
-}
-
-const SyncData& SyncJob::roomData() const
-{
-    return d->roomData;
-}
-
-QString SyncJob::apiPath() const
-{
-    return "_matrix/client/r0/sync";
-}
-
-QUrlQuery SyncJob::query() const
-{
+    setLoggingCategory(SYNCJOB);
     QUrlQuery query;
-    if( !d->filter.isEmpty() )
-        query.addQueryItem("filter", d->filter);
-    if( d->fullState )
-        query.addQueryItem("full_state", "true");
-    if( !d->presence.isEmpty() )
-        query.addQueryItem("set_presence", d->presence);
-    if( d->timeout >= 0 )
-        query.addQueryItem("timeout", QString::number(d->timeout));
-    if( !d->since.isEmpty() )
-        query.addQueryItem("since", d->since);
-    return query;
+    if( !filter.isEmpty() )
+        query.addQueryItem("filter", filter);
+    if( !presence.isEmpty() )
+        query.addQueryItem("set_presence", presence);
+    if( timeout >= 0 )
+        query.addQueryItem("timeout", QString::number(timeout));
+    if( !since.isEmpty() )
+        query.addQueryItem("since", since);
+    setRequestQuery(query);
+
+    setMaxRetries(std::numeric_limits<int>::max());
+}
+
+QString SyncData::nextBatch() const
+{
+    return nextBatch_;
+}
+
+SyncDataList&& SyncData::takeRoomData()
+{
+    return std::move(roomData);
+}
+
+SyncBatch<Event>&& SyncData::takeAccountData()
+{
+    return std::move(accountData);
 }
 
 BaseJob::Status SyncJob::parseJson(const QJsonDocument& data)
 {
-    QJsonObject json = data.object();
-    d->nextBatch = json.value("next_batch").toString();
-    // TODO: presence
-    // TODO: account_data
-    QJsonObject rooms = json.value("rooms").toObject();
-
-    const struct { QString jsonKey; JoinState enumVal; } roomStates[]
-    {
-        { "join", JoinState::Join },
-        { "invite", JoinState::Invite },
-        { "leave", JoinState::Leave }
-    };
-    for (auto roomState: roomStates)
-    {
-        const QJsonObject rs = rooms.value(roomState.jsonKey).toObject();
-        d->roomData.reserve(rs.size());
-        for( auto rkey: rs.keys() )
-        {
-            d->roomData.push_back({rkey, roomState.enumVal, rs[rkey].toObject()});
-        }
-    }
-
-    return Success;
+    return d.parseJson(data);
 }
 
-void SyncRoomData::EventList::fromJson(const QJsonObject& roomContents)
+BaseJob::Status SyncData::parseJson(const QJsonDocument &data)
 {
-    auto l = eventsFromJson(roomContents[jsonKey].toObject()["events"].toArray());
-    swap(l);
+    QElapsedTimer et; et.start();
+
+    auto json = data.object();
+    nextBatch_ = json.value("next_batch").toString();
+    // TODO: presence
+    accountData.fromJson(json);
+
+    QJsonObject rooms = json.value("rooms").toObject();
+    JoinStates::Int ii = 1; // ii is used to make a JoinState value
+    for (size_t i = 0; i < JoinStateStrings.size(); ++i, ii <<= 1)
+    {
+        const auto rs = rooms.value(JoinStateStrings[i]).toObject();
+        // We have a Qt container on the right and an STL one on the left
+        roomData.reserve(static_cast<size_t>(rs.size()));
+        for(auto roomIt = rs.begin(); roomIt != rs.end(); ++roomIt)
+            roomData.emplace_back(roomIt.key(), JoinState(ii),
+                                  roomIt.value().toObject());
+    }
+    qCDebug(PROFILER) << "*** SyncData::parseJson(): batch with"
+                      << rooms.size() << "room(s) in" << et;
+    return BaseJob::Success;
 }
 
-SyncRoomData::SyncRoomData(QString roomId_, JoinState joinState_, const QJsonObject& room_)
+const QString SyncRoomData::UnreadCountKey =
+        QStringLiteral("x-qmatrixclient.unread_count");
+
+SyncRoomData::SyncRoomData(const QString& roomId_, JoinState joinState_,
+                           const QJsonObject& room_)
     : roomId(roomId_)
     , joinState(joinState_)
-    , state("state")
+    , state(joinState == JoinState::Invite ? "invite_state" : "state")
     , timeline("timeline")
     , ephemeral("ephemeral")
     , accountData("account_data")
-    , inviteState("invite_state")
 {
     switch (joinState) {
         case JoinState::Invite:
-            inviteState.fromJson(room_);
+            state.fromJson(room_);
             break;
         case JoinState::Join:
             state.fromJson(room_);
@@ -166,15 +116,18 @@ SyncRoomData::SyncRoomData(QString roomId_, JoinState joinState_, const QJsonObj
             timeline.fromJson(room_);
             break;
     default:
-        qWarning() << "SyncRoomData: Unknown JoinState value, ignoring:" << int(joinState);
+        qCWarning(SYNCJOB) << "SyncRoomData: Unknown JoinState value, ignoring:" << int(joinState);
     }
 
-    QJsonObject timeline = room_.value("timeline").toObject();
-    timelineLimited = timeline.value("limited").toBool();
-    timelinePrevBatch = timeline.value("prev_batch").toString();
+    auto timelineJson = room_.value("timeline").toObject();
+    timelineLimited = timelineJson.value("limited").toBool();
+    timelinePrevBatch = timelineJson.value("prev_batch").toString();
 
-    QJsonObject unread = room_.value("unread_notifications").toObject();
-    highlightCount = unread.value("highlight_count").toInt();
-    notificationCount = unread.value("notification_count").toInt();
-    qDebug() << "Highlights: " << highlightCount << " Notifications:" << notificationCount;
+    auto unreadJson = room_.value("unread_notifications").toObject();
+    unreadCount = unreadJson.value(UnreadCountKey).toInt(-2);
+    highlightCount = unreadJson.value("highlight_count").toInt();
+    notificationCount = unreadJson.value("notification_count").toInt();
+    if (highlightCount > 0 || notificationCount > 0)
+        qCDebug(SYNCJOB) << "Highlights: " << highlightCount
+                         << " Notifications:" << notificationCount;
 }

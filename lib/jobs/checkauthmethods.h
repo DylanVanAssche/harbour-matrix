@@ -16,31 +16,25 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_CHECKAUTHMETHODS_H
-#define QMATRIXCLIENT_CHECKAUTHMETHODS_H
+#pragma once
 
 #include "basejob.h"
 
 namespace QMatrixClient
 {
-    class ConnectionData;
-    
     class CheckAuthMethods : public BaseJob
     {
         public:
-            CheckAuthMethods(ConnectionData* connection);
+            CheckAuthMethods();
             virtual ~CheckAuthMethods();
-            
+
             QString session();
-            
+
         protected:
-            QString apiPath() const override;
             Status parseJson(const QJsonDocument& data) override;
-            
+
         private:
             class Private;
             Private* d;
     };
 }
-
-#endif // QMATRIXCLIENT_CHECKAUTHMETHODS_H

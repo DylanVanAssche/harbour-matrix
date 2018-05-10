@@ -16,10 +16,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_CONNECTIONDATA_H
-#define QMATRIXCLIENT_CONNECTIONDATA_H
+#pragma once
 
 #include <QtCore/QUrl>
+
+#include <memory>
 
 class QNetworkAccessManager;
 
@@ -28,25 +29,27 @@ namespace QMatrixClient
     class ConnectionData
     {
         public:
-            ConnectionData(QUrl baseUrl);
+            explicit ConnectionData(QUrl baseUrl);
             virtual ~ConnectionData();
-            
-            //bool isConnected() const;
-            QString accessToken() const;
+
+            QByteArray accessToken() const;
             QUrl baseUrl() const;
+            const QString& deviceId() const;
 
             QNetworkAccessManager* nam() const;
-            void setToken( QString accessToken );
+            void setBaseUrl(QUrl baseUrl);
+            void setToken(QByteArray accessToken);
             void setHost( QString host );
             void setPort( int port );
+            void setDeviceId(const QString& deviceId);
 
             QString lastEvent() const;
             void setLastEvent( QString identifier );
-            
-        private:
-            class Private;
-            Private* d;
-    };
-}           
 
-#endif // QMATRIXCLIENT_CONNECTIONDATA_H
+            QByteArray generateTxnId() const;
+
+        private:
+            struct Private;
+            std::unique_ptr<Private> d;
+    };
+}  // namespace QMatrixClient

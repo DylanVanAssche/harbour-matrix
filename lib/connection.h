@@ -16,79 +16,445 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_CONNECTION_H
-#define QMATRIXCLIENT_CONNECTION_H
+#pragma once
+
+#include "jobs/generated/create_room.h"
+#include "joinstate.h"
 
 #include <QtCore/QObject>
 #include <QtCore/QUrl>
+#include <QtCore/QSize>
+
+#include <functional>
+#include <memory>
 
 namespace QMatrixClient
 {
     class Room;
     class User;
-    class Event;
-    class ConnectionPrivate;
+    class RoomEvent;
     class ConnectionData;
 
     class SyncJob;
+    class SyncData;
     class RoomMessagesJob;
     class PostReceiptJob;
+    class ForgetRoomJob;
     class MediaThumbnailJob;
+    class JoinRoomJob;
+    class UploadContentJob;
+    class GetContentJob;
+    class DownloadFileJob;
 
     class Connection: public QObject {
             Q_OBJECT
+
+            /** Whether or not the rooms state should be cached locally
+             * \sa loadState(), saveState()
+             */
+            Q_PROPERTY(User* localUser READ user CONSTANT)
+            Q_PROPERTY(QString localUserId READ userId CONSTANT)
+            Q_PROPERTY(QString deviceId READ deviceId CONSTANT)
+            Q_PROPERTY(QByteArray accessToken READ accessToken CONSTANT)
+            Q_PROPERTY(QUrl homeserver READ homeserver WRITE setHomeserver NOTIFY homeserverChanged)
+            Q_PROPERTY(bool cacheState READ cacheState WRITE setCacheState NOTIFY cacheStateChanged)
         public:
-            Connection(QUrl server, QObject* parent = nullptr);
-            Connection();
+            using room_factory_t =
+                std::function<Room*(Connection*, const QString&, JoinState joinState)>;
+            using user_factory_t =
+                std::function<User*(Connection*, const QString&)>;
+
+            using DirectChatsMap = QMultiHash<const User*, QString>;
+
+            using AccountDataMap = std::conditional_t<
+                QT_VERSION >= QT_VERSION_CHECK(5, 5, 0),
+                QVariantHash, QVariantMap>;
+
+            enum RoomVisibility { PublishRoom, UnpublishRoom }; // FIXME: Should go inside CreateRoomJob
+
+            explicit Connection(QObject* parent = nullptr);
+            explicit Connection(const QUrl& server, QObject* parent = nullptr);
             virtual ~Connection();
 
-            QHash<QString, Room*> roomMap() const;
-            Q_INVOKABLE virtual bool isConnected();
+            /** Get all Invited and Joined rooms
+             * \return a hashmap from a composite key - room name and whether
+             *         it's an Invite rather than Join - to room pointers
+             */
+            QHash<QPair<QString, bool>, Room*> roomMap() const;
 
-            Q_INVOKABLE virtual void resolveServer( QString domain );
-            Q_INVOKABLE virtual void connectToServer( QString user, QString password );
-            Q_INVOKABLE virtual void connectWithToken( QString userId, QString token );
-            Q_INVOKABLE virtual void reconnect();
-            Q_INVOKABLE virtual void disconnectFromServer();
-            Q_INVOKABLE virtual void logout();
+            /** Check whether the account has data of the given type
+             * Direct chats map is not supported by this method _yet_.
+             */
+            bool hasAccountData(const QString& type) const;
 
-            Q_INVOKABLE virtual void sync(int timeout=-1);
-            Q_INVOKABLE virtual void postMessage( Room* room, QString type, QString message );
-            Q_INVOKABLE virtual PostReceiptJob* postReceipt( Room* room, Event* event );
-            Q_INVOKABLE virtual void joinRoom( QString roomAlias );
-            Q_INVOKABLE virtual void leaveRoom( Room* room );
-            Q_INVOKABLE virtual RoomMessagesJob* getMessages( Room* room, QString from );
-            virtual MediaThumbnailJob* getThumbnail( QUrl url, int requestedWidth, int requestedHeight );
+            /** Get a generic account data event of the given type
+             * This returns a generic hashmap for any account data event
+             * stored on the server. Direct chats map cannot be retrieved
+             * using this method _yet_; use directChats() instead.
+             */
+            AccountDataMap accountData(const QString& type) const;
 
-            Q_INVOKABLE QUrl homeserver() const;
-            Q_INVOKABLE User* user(QString userId);
-            Q_INVOKABLE User* user();
-            Q_INVOKABLE QString userId() const;
+            /** Get all Invited and Joined rooms grouped by tag
+             * \return a hashmap from tag name to a vector of room pointers,
+             *         sorted by their order in the tag - details are at
+             *         https://matrix.org/speculator/spec/drafts%2Fe2e/client_server/unstable.html#id95
+             */
+            QHash<QString, QVector<Room*>> tagsToRooms() const;
+
+            /** Get all room tags known on this connection */
+            QStringList tagNames() const;
+
+            /** Get the list of rooms with the specified tag */
+            QVector<Room*> roomsWithTag(const QString& tagName) const;
+
+            /** Mark the room as a direct chat with the user
+             * This function marks \p room as a direct chat with \p user.
+             * Emits the signal synchronously, without waiting to complete
+             * synchronisation with the server.
+             *
+             * \sa directChatsListChanged
+             */
+            void addToDirectChats(const Room* room, const User* user);
+
+            /** Unmark the room from direct chats
+             * This function removes the room id from direct chats either for
+             * a specific \p user or for all users if \p user in nullptr.
+             * The room id is used to allow removal of, e.g., ids of forgotten
+             * rooms; a Room object need not exist. Emits the signal
+             * immediately, without waiting to complete synchronisation with
+             * the server.
+             *
+             * \sa directChatsListChanged
+             */
+            void removeFromDirectChats(const QString& roomId,
+                                       const User* user = nullptr);
+
+            /** Check whether the room id corresponds to a direct chat */
+            bool isDirectChat(const QString& roomId) const;
+
+            /** Get the whole map from users to direct chat rooms */
+            DirectChatsMap directChats() const;
+
+            /** Retrieve the list of users the room is a direct chat with
+             * @return The list of users for which this room is marked as
+             * a direct chat; an empty list if the room is not a direct chat
+             */
+            QList<const User*> directChatUsers(const Room* room) const;
+
+            /** Get the full list of users known to this account */
+            QMap<QString, User*> users() const;
+
+            QUrl homeserver() const;
+            Q_INVOKABLE Room* room(const QString& roomId,
+                 JoinStates states = JoinState::Invite|JoinState::Join) const;
+            Q_INVOKABLE Room* invitation(const QString& roomId) const;
+            Q_INVOKABLE User* user(const QString& userId);
+            const User* user() const;
+            User* user();
+            QString userId() const;
+            QString deviceId() const;
             /** @deprecated Use accessToken() instead. */
             Q_INVOKABLE QString token() const;
-            Q_INVOKABLE QString accessToken() const;
+            QByteArray accessToken() const;
+            Q_INVOKABLE SyncJob* syncJob() const;
+            Q_INVOKABLE int millisToReconnect() const;
 
+            /**
+             * Call this before first sync to load from previously saved file.
+             *
+             * \param fromFile A local path to read the state from. Uses QUrl
+             * to be QML-friendly. Empty parameter means using a path
+             * defined by stateCachePath().
+             */
+            Q_INVOKABLE void loadState(const QUrl &fromFile = {});
+            /**
+             * This method saves the current state of rooms (but not messages
+             * in them) to a local cache file, so that it could be loaded by
+             * loadState() on a next run of the client.
+             *
+             * \param toFile A local path to save the state to. Uses QUrl to be
+             * QML-friendly. Empty parameter means using a path defined by
+             * stateCachePath().
+             */
+            Q_INVOKABLE void saveState(const QUrl &toFile = {}) const;
+
+            /**
+             * The default path to store the cached room state, defined as
+             * follows:
+             *     QStandardPaths::writeableLocation(QStandardPaths::CacheLocation) + _safeUserId + "_state.json"
+             * where `_safeUserId` is userId() with `:` (colon) replaced with
+             * `_` (underscore)
+             * /see loadState(), saveState()
+             */
+            Q_INVOKABLE QString stateCachePath() const;
+
+            bool cacheState() const;
+            void setCacheState(bool newValue);
+
+            /**
+             * This is a universal method to start a job of a type passed
+             * as a template parameter. Arguments to callApi() are arguments
+             * to the job constructor _except_ the first ConnectionData*
+             * argument - callApi() will pass it automatically.
+             */
+            template <typename JobT, typename... JobArgTs>
+            JobT* callApi(JobArgTs&&... jobArgs) const
+            {
+                auto job = new JobT(std::forward<JobArgTs>(jobArgs)...);
+                job->start(connectionData());
+                return job;
+            }
+
+            /** Generates a new transaction id. Transaction id's are unique within
+             * a single Connection object
+             */
+            Q_INVOKABLE QByteArray generateTxnId();
+
+            template <typename T = Room>
+            static void setRoomType()
+            {
+                roomFactory =
+                    [](Connection* c, const QString& id, JoinState joinState)
+                    { return new T(c, id, joinState); };
+            }
+
+            template <typename T = User>
+            static void setUserType()
+            {
+                userFactory =
+                    [](Connection* c, const QString& id) { return new T(id, c); };
+            }
+
+        public slots:
+            /** Set the homeserver base URL */
+            void setHomeserver(const QUrl& baseUrl);
+
+            /** Determine and set the homeserver from domain or MXID */
+            void resolveServer(const QString& mxidOrDomain);
+
+            void connectToServer(const QString& user, const QString& password,
+                                 const QString& initialDeviceName,
+                                 const QString& deviceId = {});
+            void connectWithToken(const QString& userId, const QString& accessToken,
+                                  const QString& deviceId);
+
+            /** @deprecated Use stopSync() instead */
+            void disconnectFromServer() { stopSync(); }
+            void logout();
+
+            void sync(int timeout = -1);
+            void stopSync();
+
+            virtual MediaThumbnailJob* getThumbnail(const QString& mediaId,
+                                                    QSize requestedSize) const;
+            MediaThumbnailJob* getThumbnail(const QUrl& url,
+                                            QSize requestedSize) const;
+            MediaThumbnailJob* getThumbnail(const QUrl& url,
+                                            int requestedWidth,
+                                            int requestedHeight) const;
+
+            // QIODevice* should already be open
+            UploadContentJob* uploadContent(QIODevice* contentSource,
+                            const QString& filename = {},
+                            const QString& contentType = {}) const;
+            UploadContentJob* uploadFile(const QString& fileName,
+                                         const QString& contentType = {});
+            GetContentJob* getContent(const QString& mediaId) const;
+            GetContentJob* getContent(const QUrl& url) const;
+            // If localFilename is empty, a temporary file will be created
+            DownloadFileJob* downloadFile(const QUrl& url,
+                            const QString& localFilename = {}) const;
+
+            /**
+             * \brief Create a room (generic method)
+             * This method allows to customize room entirely to your liking,
+             * providing all the attributes the original CS API provides.
+             */
+            CreateRoomJob* createRoom(RoomVisibility visibility,
+                const QString& alias, const QString& name, const QString& topic,
+                const QVector<QString>& invites, const QString& presetName = {}, bool isDirect = false,
+                bool guestsCanJoin = false,
+                const QVector<CreateRoomJob::StateEvent>& initialState = {},
+                const QVector<CreateRoomJob::Invite3pid>& invite3pids = {},
+                const QJsonObject& creationContent = {});
+
+            /** Get a direct chat with a single user
+             * This method may return synchronously or asynchoronously depending
+             * on whether a direct chat room with the respective person exists
+             * already.
+             *
+             * \sa directChatAvailable
+             */
+            Q_INVOKABLE void requestDirectChat(const QString& userId);
+
+            /** Run an operation in a direct chat with the user
+             * This method may return synchronously or asynchoronously depending
+             * on whether a direct chat room with the respective person exists
+             * already. Instead of emitting a signal it executes the passed
+             * function object with the direct chat room as its parameter.
+             */
+            Q_INVOKABLE void doInDirectChat(const QString& userId,
+                                            std::function<void(Room*)> operation);
+
+            /** Create a direct chat with a single user, optional name and topic
+             * A room will always be created, unlike in requestDirectChat.
+             * It is advised to use requestDirectChat as a default way of getting
+             * one-on-one with a person, and only use createDirectChat when
+             * a new creation is explicitly desired.
+             */
+            CreateRoomJob* createDirectChat(const QString& userId,
+                const QString& topic = {}, const QString& name = {});
+
+            virtual JoinRoomJob* joinRoom(const QString& roomAlias);
+
+            /** Sends /forget to the server and also deletes room locally.
+             * This method is in Connection, not in Room, since it's a
+             * room lifecycle operation, and Connection is an acting room manager.
+             * It ensures that the local user is not a member of a room (running /leave,
+             * if necessary) then issues a /forget request and if that one doesn't fail
+             * deletion of the local Room object is ensured.
+             * \param id - the room id to forget
+             * \return - the ongoing /forget request to the server; note that the
+             * success() signal of this request is connected to deleteLater()
+             * of a respective room so by the moment this finishes, there might be no
+             * Room object anymore.
+             */
+            ForgetRoomJob* forgetRoom(const QString& id);
+
+            // Old API that will be abolished any time soon. DO NOT USE.
+
+            /** @deprecated Use callApi<PostMessageJob>() or Room::postMessage() instead */
+            virtual void postMessage(Room* room, const QString& type,
+                                                 const QString& message) const;
+            /** @deprecated Use callApi<PostReceiptJob>() or Room::postReceipt() instead */
+            virtual PostReceiptJob* postReceipt(Room* room,
+                                                RoomEvent* event) const;
+            /** @deprecated Use callApi<LeaveRoomJob>() or Room::leaveRoom() instead */
+            virtual void leaveRoom( Room* room );
+            /** @deprecated User callApi<RoomMessagesJob>() or Room::getPreviousContent() instead */
+            virtual RoomMessagesJob* getMessages(Room* room,
+                                                 const QString& from) const;
         signals:
+            /**
+             * @deprecated
+             * This was a signal resulting from a successful resolveServer().
+             * Since Connection now provides setHomeserver(), the HS URL
+             * may change even without resolveServer() invocation. Use
+             * homeserverChanged() instead of resolved(). You can also use
+             * connectToServer and connectWithToken without the HS URL set in
+             * advance (i.e. without calling resolveServer), as they now trigger
+             * server name resolution from MXID if the server URL is not valid.
+             */
             void resolved();
+            void resolveError(QString error);
+
+            void homeserverChanged(QUrl baseUrl);
+
             void connected();
-            void reconnected();
+            void reconnected(); //< Unused; use connected() instead
             void loggedOut();
+            void loginError(QString error);
+            void networkError(int retriesTaken, int inMilliseconds);
 
             void syncDone();
-            void newRoom(Room* room);
-            void joinedRoom(Room* room);
+            void syncError(QString error);
 
-            void loginError(QString error);
-            void connectionError(QString error);
-            void resolveError(QString error);
-            //void jobError(BaseJob* job);
-            
+            void newUser(User* user);
+
+            /**
+             * \group Signals emitted on room transitions
+             *
+             * Note: Rooms in Invite state are always stored separately from
+             * rooms in Join/Leave state, because of special treatment of
+             * invite_state in Matrix CS API (see The Spec on /sync for details).
+             * Therefore, objects below are: r - room in Join/Leave state;
+             * i - room in Invite state
+             *
+             * 1. none -> Invite: newRoom(r), invitedRoom(r,nullptr)
+             * 2. none -> Join: newRoom(r), joinedRoom(r,nullptr)
+             * 3. none -> Leave: newRoom(r), leftRoom(r,nullptr)
+             * 4. Invite -> Join:
+             *      newRoom(r), joinedRoom(r,i), aboutToDeleteRoom(i)
+             * 4a. Leave and Invite -> Join:
+             *      joinedRoom(r,i), aboutToDeleteRoom(i)
+             * 5. Invite -> Leave:
+             *      newRoom(r), leftRoom(r,i), aboutToDeleteRoom(i)
+             * 5a. Leave and Invite -> Leave:
+             *      leftRoom(r,i), aboutToDeleteRoom(i)
+             * 6. Join -> Leave: leftRoom(r)
+             * 7. Leave -> Invite: newRoom(i), invitedRoom(i,r)
+             * 8. Leave -> Join: joinedRoom(r)
+             * The following transitions are only possible via forgetRoom()
+             * so far; if a room gets forgotten externally, sync won't tell
+             * about it:
+             * 9. any -> none: as any -> Leave, then aboutToDeleteRoom(r)
+             */
+
+            /** A new room object has been created */
+            void newRoom(Room* room);
+
+            /** Invitation to a room received
+             *
+             * If the same room is in Left state, it's passed in prev.
+             */
+            void invitedRoom(Room* room, Room* prev);
+
+            /** A room has just been joined
+             *
+             * It's not the same as receiving a room in "join" section of sync
+             * response (rooms will be there even after joining). If this room
+             * was in Invite state before, the respective object is passed in
+             * prev (and it will be deleted shortly afterwards).
+             */
+            void joinedRoom(Room* room, Room* prev);
+
+            /** A room has just been left
+             *
+             * If this room has been in Invite state (as in case of rejecting
+             * an invitation), the respective object will be passed in prev
+             * (and will be deleted shortly afterwards).
+             */
+            void leftRoom(Room* room, Room* prev);
+
+            /** The room object is about to be deleted */
+            void aboutToDeleteRoom(Room* room);
+
+            /** The room has just been created by createRoom or requestDirectChat
+             *
+             * This signal is not emitted in usual room state transitions,
+             * only as an outcome of room creation operations invoked by
+             * the client.
+             * \note requestDirectChat doesn't necessarily create a new chat;
+             *       use directChatAvailable signal if you just need to obtain
+             *       a direct chat room.
+             */
+            void createdRoom(Room* room);
+
+            /** Account data (except direct chats) have changed */
+            void accountDataChanged(QString type);
+
+            /** The direct chat room is ready for using
+             * This signal is emitted upon any successful outcome from
+             * requestDirectChat.
+             */
+            void directChatAvailable(Room* directChat);
+
+            /** The list of direct chats has changed
+             * This signal is emitted every time when the mapping of users
+             * to direct chat rooms is changed (because of either local updates
+             * or a different list arrived from the server).
+             */
+            void directChatsListChanged(DirectChatsMap additions,
+                                        DirectChatsMap removals);
+
+            void cacheStateChanged();
+
         protected:
             /**
              * @brief Access the underlying ConnectionData class
              */
-            ConnectionData* connectionData();
-            
+            const ConnectionData* connectionData() const;
+
             /**
              * @brief Find a (possibly new) Room object for the specified id
              * Use this method whenever you need to find a Room object in
@@ -96,24 +462,38 @@ namespace QMatrixClient
              * the server; in particular, does not automatically create rooms
              * on the server.
              * @return a pointer to a Room object with the specified id; nullptr
-             * if roomId is empty if createRoom() failed to create a Room object.
+             * if roomId is empty if roomFactory() failed to create a Room object.
              */
-            Room* provideRoom(QString roomId);
+            Room* provideRoom(const QString& roomId, JoinState joinState);
 
             /**
-             * makes it possible for derived classes to have its own User class
+             * Completes loading sync data.
              */
-            virtual User* createUser(QString userId);
-            
-            /**
-             * makes it possible for derived classes to have its own Room class
-             */
-            virtual Room* createRoom(QString roomId);
+            void onSyncSuccess(SyncData &&data);
 
         private:
             class Private;
-            Private* d;
-    };
-}
+            std::unique_ptr<Private> d;
 
-#endif // QMATRIXCLIENT_CONNECTION_H
+            /**
+             * A single entry for functions that need to check whether the
+             * homeserver is valid before running. May either execute connectFn
+             * synchronously or asynchronously (if tryResolve is true and
+             * a DNS lookup is initiated); in case of errors, emits resolveError
+             * if the homeserver URL is not valid and cannot be resolved from
+             * userId.
+             *
+             * @param userId - fully-qualified MXID to resolve HS from
+             * @param connectFn - a function to execute once the HS URL is good
+             */
+            void checkAndConnect(const QString& userId,
+                                 std::function<void()> connectFn);
+            void doConnectToServer(const QString& user, const QString& password,
+                                   const QString& initialDeviceName,
+                                   const QString& deviceId = {});
+
+            static room_factory_t roomFactory;
+            static user_factory_t userFactory;
+    };
+}  // namespace QMatrixClient
+Q_DECLARE_METATYPE(QMatrixClient::Connection*)

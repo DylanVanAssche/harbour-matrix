@@ -18,41 +18,31 @@
 
 #include "connectiondata.h"
 
-#include <QtNetwork/QNetworkAccessManager>
+#include "networkaccessmanager.h"
+#include "logging.h"
 
 using namespace QMatrixClient;
 
-class ConnectionData::Private
+struct ConnectionData::Private
 {
-    public:
-        Private() {/*isConnected=false;*/}
-        
-        QUrl baseUrl;
-        //bool isConnected;
-        QString accessToken;
-        QString lastEvent;
-        QNetworkAccessManager* nam;
+    explicit Private(const QUrl& url) : baseUrl(url) { }
+
+    QUrl baseUrl;
+    QByteArray accessToken;
+    QString lastEvent;
+    QString deviceId;
+
+    mutable unsigned int txnCounter = 0;
+    const qint64 id = QDateTime::currentMSecsSinceEpoch();
 };
 
 ConnectionData::ConnectionData(QUrl baseUrl)
-    : d(new Private)
-{
-    d->baseUrl = baseUrl;
-    d->nam = new QNetworkAccessManager();
-}
+    : d(std::make_unique<Private>(baseUrl))
+{ }
 
-ConnectionData::~ConnectionData()
-{
-    d->nam->deleteLater();
-    delete d;
-}
+ConnectionData::~ConnectionData() = default;
 
-// bool ConnectionData::isConnected() const
-// {
-//     return d->isConnected;
-// }
-
-QString ConnectionData::accessToken() const
+QByteArray ConnectionData::accessToken() const
 {
     return d->accessToken;
 }
@@ -64,10 +54,16 @@ QUrl ConnectionData::baseUrl() const
 
 QNetworkAccessManager* ConnectionData::nam() const
 {
-    return d->nam;
+    return NetworkAccessManager::instance();
 }
 
-void ConnectionData::setToken(QString token)
+void ConnectionData::setBaseUrl(QUrl baseUrl)
+{
+    d->baseUrl = baseUrl;
+    qCDebug(MAIN) << "updated baseUrl to" << d->baseUrl;
+}
+
+void ConnectionData::setToken(QByteArray token)
 {
     d->accessToken = token;
 }
@@ -75,13 +71,24 @@ void ConnectionData::setToken(QString token)
 void ConnectionData::setHost(QString host)
 {
     d->baseUrl.setHost(host);
-    qDebug() << "updated baseUrl to" << d->baseUrl;
+    qCDebug(MAIN) << "updated baseUrl to" << d->baseUrl;
 }
 
 void ConnectionData::setPort(int port)
 {
     d->baseUrl.setPort(port);
-    qDebug() << "updated baseUrl to" << d->baseUrl;
+    qCDebug(MAIN) << "updated baseUrl to" << d->baseUrl;
+}
+
+const QString& ConnectionData::deviceId() const
+{
+    return d->deviceId;
+}
+
+void ConnectionData::setDeviceId(const QString& deviceId)
+{
+    d->deviceId = deviceId;
+    qCDebug(MAIN) << "updated deviceId to" << d->deviceId;
 }
 
 QString ConnectionData::lastEvent() const
@@ -92,4 +99,10 @@ QString ConnectionData::lastEvent() const
 void ConnectionData::setLastEvent(QString identifier)
 {
     d->lastEvent = identifier;
+}
+
+QByteArray ConnectionData::generateTxnId() const
+{
+    return QByteArray::number(d->id) + 'q' +
+            QByteArray::number(++d->txnCounter);
 }

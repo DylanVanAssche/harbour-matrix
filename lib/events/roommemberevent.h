@@ -16,35 +16,63 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_ROOMMEMBEREVENT_H
-#define QMATRIXCLIENT_ROOMMEMBEREVENT_H
-
-#include <QtCore/QJsonObject>
-#include <QtCore/QUrl>
+#pragma once
 
 #include "event.h"
 
+#include "eventcontent.h"
+
+#include <QtCore/QUrl>
+
 namespace QMatrixClient
 {
-    enum class MembershipType {Invite, Join, Knock, Leave, Ban};
-
-    class RoomMemberEvent: public Event
+    class MemberEventContent: public EventContent::Base
     {
         public:
-            RoomMemberEvent();
-            virtual ~RoomMemberEvent();
+            enum MembershipType : size_t { Invite = 0, Join, Knock, Leave, Ban,
+                                           Undefined };
 
-            MembershipType membership() const;
-            QString userId() const;
-            QString displayName() const;
-            QUrl avatarUrl() const;
+            explicit MemberEventContent(MembershipType mt = MembershipType::Join)
+                : membership(mt)
+            { }
+            explicit MemberEventContent(const QJsonObject& json);
 
-            static RoomMemberEvent* fromJson(const QJsonObject& obj);
+            MembershipType membership;
+            bool isDirect = false;
+            QString displayName;
+            QUrl avatarUrl;
+
+        protected:
+            void fillJson(QJsonObject* o) const override;
+    };
+
+    using MembershipType = MemberEventContent::MembershipType;
+
+    class RoomMemberEvent: public StateEvent<MemberEventContent>
+    {
+            Q_GADGET
+        public:
+            static constexpr const char* TypeId = "m.room.member";
+
+            using MembershipType = MemberEventContent::MembershipType;
+
+            RoomMemberEvent(MemberEventContent&& c)
+                : StateEvent(Type::RoomMember, c)
+            { }
+            explicit RoomMemberEvent(const QJsonObject& obj)
+                : StateEvent(Type::RoomMember, obj)
+//                , _userId(obj["state_key"].toString())
+            { }
+
+            MembershipType membership() const  { return content().membership; }
+            QString userId() const
+            { return originalJsonObject().value("state_key").toString(); }
+            bool isDirect() const { return content().isDirect; }
+            QString displayName() const { return content().displayName; }
+            QUrl avatarUrl() const      { return content().avatarUrl; }
 
         private:
-            class Private;
-            Private* d;
+//            QString _userId;
+            REGISTER_ENUM(MembershipType)
     };
-}
-
-#endif // QMATRIXCLIENT_ROOMMEMBEREVENT_H
+}  // namespace QMatrixClient

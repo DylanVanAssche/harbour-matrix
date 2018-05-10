@@ -18,71 +18,52 @@
 
 #include "roommemberevent.h"
 
-#include <QtCore/QDebug>
-#include <QtCore/QUrl>
+#include "logging.h"
+
+#include <array>
 
 using namespace QMatrixClient;
 
-class RoomMemberEvent::Private
-{
-    public:
-        MembershipType membership;
-        QString userId;
-        QString displayname;
-        QUrl avatarUrl;
-};
+static const std::array<QString, 5> membershipStrings = { {
+    QStringLiteral("invite"), QStringLiteral("join"),
+    QStringLiteral("knock"), QStringLiteral("leave"),
+    QStringLiteral("ban")
+} };
 
-RoomMemberEvent::RoomMemberEvent()
-    : Event(EventType::RoomMember)
-    , d(new Private)
+namespace QMatrixClient
 {
+    template <>
+    struct FromJson<MembershipType>
+    {
+        MembershipType operator()(const QJsonValue& jv) const
+        {
+            const auto& membershipString = jv.toString();
+            for (auto it = membershipStrings.begin();
+                    it != membershipStrings.end(); ++it)
+                if (membershipString == *it)
+                    return MembershipType(it - membershipStrings.begin());
+
+            qCWarning(EVENTS) << "Unknown MembershipType: " << membershipString;
+            return MembershipType::Undefined;
+        }
+    };
 }
 
-RoomMemberEvent::~RoomMemberEvent()
-{
-    delete d;
-}
+MemberEventContent::MemberEventContent(const QJsonObject& json)
+    : membership(fromJson<MembershipType>(json["membership"]))
+    , isDirect(json["is_direct"].toBool())
+    , displayName(json["displayname"].toString())
+    , avatarUrl(json["avatar_url"].toString())
+{ }
 
-MembershipType RoomMemberEvent::membership() const
+void MemberEventContent::fillJson(QJsonObject* o) const
 {
-    return d->membership;
-}
-
-QString RoomMemberEvent::userId() const
-{
-    return d->userId;
-}
-
-QString RoomMemberEvent::displayName() const
-{
-    return d->displayname;
-}
-
-QUrl RoomMemberEvent::avatarUrl() const
-{
-    return d->avatarUrl;
-}
-
-RoomMemberEvent* RoomMemberEvent::fromJson(const QJsonObject& obj)
-{
-    RoomMemberEvent* e = new RoomMemberEvent();
-    e->parseJson(obj);
-    e->d->userId = obj.value("state_key").toString();
-    QJsonObject content = obj.value("content").toObject();
-    e->d->displayname = content.value("displayname").toString();
-    QString membershipString = content.value("membership").toString();
-    if( membershipString == "invite" )
-        e->d->membership = MembershipType::Invite;
-    else if( membershipString == "join" )
-        e->d->membership = MembershipType::Join;
-    else if( membershipString == "knock" )
-        e->d->membership = MembershipType::Knock;
-    else if( membershipString == "leave" )
-        e->d->membership = MembershipType::Leave;
-    else if( membershipString == "ban" )
-        e->d->membership = MembershipType::Ban;
-    else
-        qDebug() << "Unknown MembershipType: " << membershipString;
-    e->d->avatarUrl = QUrl(content.value("avatar_url").toString());
-    return e;
+    Q_ASSERT(o);
+    Q_ASSERT_X(membership != MembershipType::Undefined, __FUNCTION__,
+             "The key 'membership' must be explicit in MemberEventContent");
+    if (membership != MembershipType::Undefined)
+        o->insert("membership", membershipStrings[membership]);
+    o->insert("displayname", displayName);
+    if (avatarUrl.isValid())
+        o->insert("avatar_url", avatarUrl.toString());
 }

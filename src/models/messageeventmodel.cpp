@@ -76,20 +76,6 @@ void MessageEventModel::setConnection(QMatrixClient::Connection* connection)
     m_connection = connection;
 }
 
-// QModelIndex LogMessageModel::index(int row, int column, const QModelIndex& parent) const
-// {
-//     if( parent.isValid() )
-//         return QModelIndex();
-//     if( row < 0 || row >= m_currentMessages.count() )
-//         return QModelIndex();
-//     return createIndex(row, column, m_currentMessages.at(row));
-// }
-//
-// LogMessageModel::parent(const QModelIndex& index) const
-// {
-//     return QModelIndex();
-// }
-
 int MessageEventModel::rowCount(const QModelIndex& parent) const
 {
     if( !m_currentRoom || parent.isValid() )
@@ -202,11 +188,6 @@ QVariant MessageEventModel::data(const QModelIndex& index, int role) const
         }
         return "Unknown Event";
     }
-//     if( event->type() == QMatrixClient::EventType::Unknown )
-//     {
-//         QMatrixClient::UnknownEvent* e = static_cast<QMatrixClient::UnknownEvent*>(event);
-//         return "Unknown Event: " + e->typeString() + "(" + e->content();
-//     }
     return QVariant();
 }
 

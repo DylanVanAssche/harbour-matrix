@@ -18,131 +18,165 @@
 
 #include "event.h"
 
-#include <QtCore/QJsonArray>
-#include <QtCore/QJsonDocument>
-#include <QtCore/QDateTime>
-#include <QtCore/QDebug>
-
-#include "../logging_util.h"
 #include "roommessageevent.h"
-#include "roomnameevent.h"
-#include "roomaliasesevent.h"
-#include "roomcanonicalaliasevent.h"
+#include "simplestateevents.h"
 #include "roommemberevent.h"
-#include "roomtopicevent.h"
+#include "roomavatarevent.h"
 #include "typingevent.h"
 #include "receiptevent.h"
-#include "unknownevent.h"
+#include "accountdataevents.h"
+#include "directchatevent.h"
+#include "redactionevent.h"
+#include "logging.h"
+
+#include <QtCore/QJsonDocument>
 
 using namespace QMatrixClient;
 
-class Event::Private
+Event::Event(Type type, const QJsonObject& rep)
+    : _type(type), _originalJson(rep)
 {
-    public:
-        EventType type;
-        QString id;
-        QDateTime timestamp;
-        QString roomId;
-        QString originalJson;
-};
-
-Event::Event(EventType type)
-    : d(new Private)
-{
-    d->type = type;
-}
-
-Event::~Event()
-{
-    delete d;
-}
-
-EventType Event::type() const
-{
-    return d->type;
-}
-
-QString Event::id() const
-{
-    return d->id;
-}
-
-QDateTime Event::timestamp() const
-{
-    return d->timestamp;
-}
-
-QString Event::roomId() const
-{
-    return d->roomId;
-}
-
-QString Event::originalJson() const
-{
-    return d->originalJson;
-}
-
-template <typename T>
-Event* make(const QJsonObject& obj)
-{
-    return T::fromJson(obj);
-}
-
-Event* Event::fromJson(const QJsonObject& obj)
-{
-    auto delegate = lookup(obj.value("type").toString(),
-            "m.room.message", make<RoomMessageEvent>,
-            "m.room.name", make<RoomNameEvent>,
-            "m.room.aliases", make<RoomAliasesEvent>,
-            "m.room.canonical_alias", make<RoomCanonicalAliasEvent>,
-            "m.room.member", make<RoomMemberEvent>,
-            "m.room.topic", make<RoomTopicEvent>,
-            "m.typing", make<TypingEvent>,
-            "m.receipt", make<ReceiptEvent>,
-            /* Insert new event types BEFORE this line */
-            make<UnknownEvent>
-        );
-    return delegate(obj);
-}
-
-bool Event::parseJson(const QJsonObject& obj)
-{
-    d->originalJson = QString::fromUtf8(QJsonDocument(obj).toJson());
-    bool correct = (d->type != EventType::Unknown);
-    if ( d->type != EventType::Unknown &&
-         d->type != EventType::Typing &&
-         d->type != EventType::Receipt )
+    if (!rep.contains("content") &&
+            !rep.value("unsigned").toObject().contains("redacted_because"))
     {
-        if( obj.contains("event_id") )
-        {
-            d->id = obj.value("event_id").toString();
-        } else {
-            correct = false;
-            qDebug() << "Event: can't find event_id";
-            qDebug() << formatJson << obj;
-        }
-        if( obj.contains("origin_server_ts") )
-        {
-            d->timestamp = QDateTime::fromMSecsSinceEpoch( 
-                static_cast<qint64>(obj.value("origin_server_ts").toDouble()), Qt::UTC );
-        } else {
-            correct = false;
-            qDebug() << "Event: can't find ts";
-            qDebug() << formatJson << obj;
-        }
+        qCWarning(EVENTS) << "Event without 'content' node";
+        qCWarning(EVENTS) << formatJson << rep;
     }
-    if( obj.contains("room_id") )
-    {
-        d->roomId = obj.value("room_id").toString();
-    }
-    return correct;
 }
 
-Events QMatrixClient::eventsFromJson(const QJsonArray& json)
+Event::~Event() = default;
+
+QString Event::jsonType() const
 {
-    Events evs;
-    evs.reserve(json.size());
-    for (auto event: json)
-        evs.push_back(Event::fromJson(event.toObject()));
-    return evs;
+    return originalJsonObject().value("type").toString();
+}
+
+QByteArray Event::originalJson() const
+{
+    return QJsonDocument(_originalJson).toJson();
+}
+
+QJsonObject Event::originalJsonObject() const
+{
+    return _originalJson;
+}
+
+const QJsonObject Event::contentJson() const
+{
+    return _originalJson["content"].toObject();
+}
+
+template <typename BaseEventT>
+inline BaseEventT* makeIfMatches(const QJsonObject&, const QString&)
+{
+    return nullptr;
+}
+
+template <typename BaseEventT, typename EventT, typename... EventTs>
+inline BaseEventT* makeIfMatches(const QJsonObject& o, const QString& selector)
+{
+    if (selector == EventT::TypeId)
+        return new EventT(o);
+
+    return makeIfMatches<BaseEventT, EventTs...>(o, selector);
+}
+
+template <>
+EventPtr _impl::doMakeEvent<Event>(const QJsonObject& obj)
+{
+    // Check more specific event types first
+    if (auto e = doMakeEvent<RoomEvent>(obj))
+        return EventPtr(move(e));
+
+    return EventPtr { makeIfMatches<Event,
+        TypingEvent, ReceiptEvent, TagEvent, ReadMarkerEvent, DirectChatEvent>(
+                    obj, obj["type"].toString()) };
+}
+
+RoomEvent::RoomEvent(Event::Type type) : Event(type) { }
+
+RoomEvent::RoomEvent(Type type, const QJsonObject& rep)
+    : Event(type, rep)
+    , _id(rep["event_id"].toString())
+//    , _roomId(rep["room_id"].toString())
+//    , _senderId(rep["sender"].toString())
+//    , _serverTimestamp(
+//            QMatrixClient::fromJson<QDateTime>(rep["origin_server_ts"]))
+{
+//    if (_id.isEmpty())
+//    {
+//        qCWarning(EVENTS) << "Can't find event_id in a room event";
+//        qCWarning(EVENTS) << formatJson << rep;
+//    }
+//    if (!rep.contains("origin_server_ts"))
+//    {
+//        qCWarning(EVENTS) << "Can't find server timestamp in a room event";
+//        qCWarning(EVENTS) << formatJson << rep;
+//    }
+//    if (_senderId.isEmpty())
+//    {
+//        qCWarning(EVENTS) << "Can't find sender in a room event";
+//        qCWarning(EVENTS) << formatJson << rep;
+//    }
+    auto unsignedData = rep["unsigned"].toObject();
+    auto redaction = unsignedData.value("redacted_because");
+    if (redaction.isObject())
+    {
+        _redactedBecause =
+                std::make_unique<RedactionEvent>(redaction.toObject());
+        return;
+    }
+
+    _txnId = unsignedData.value("transactionId").toString();
+    if (!_txnId.isEmpty())
+        qCDebug(EVENTS) << "Event transactionId:" << _txnId;
+}
+
+RoomEvent::~RoomEvent() = default; // Let the smart pointer do its job
+
+QDateTime RoomEvent::timestamp() const
+{
+    return QMatrixClient::fromJson<QDateTime>(
+                originalJsonObject().value("origin_server_ts"));
+}
+
+QString RoomEvent::roomId() const
+{
+    return originalJsonObject().value("room_id").toString();
+}
+
+QString RoomEvent::senderId() const
+{
+    return originalJsonObject().value("sender").toString();
+}
+
+QString RoomEvent::redactionReason() const
+{
+    return isRedacted() ? _redactedBecause->reason() : QString{};
+}
+
+void RoomEvent::addId(const QString& id)
+{
+    Q_ASSERT(_id.isEmpty()); Q_ASSERT(!id.isEmpty());
+    _id = id;
+}
+
+template <>
+RoomEventPtr _impl::doMakeEvent(const QJsonObject& obj)
+{
+    return RoomEventPtr { makeIfMatches<RoomEvent,
+        RoomMessageEvent, RoomNameEvent, RoomAliasesEvent,
+        RoomCanonicalAliasEvent, RoomMemberEvent, RoomTopicEvent,
+        RoomAvatarEvent, EncryptionEvent, RedactionEvent>
+            (obj, obj["type"].toString()) };
+}
+
+StateEventBase::~StateEventBase() = default;
+
+bool StateEventBase::repeatsState() const
+{
+    auto contentJson = originalJsonObject().value("content");
+    auto prevContentJson = originalJsonObject().value("unsigned")
+                                .toObject().value("prev_content");
+    return contentJson == prevContentJson;
 }

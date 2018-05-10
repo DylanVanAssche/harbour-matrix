@@ -55,38 +55,9 @@ Q_DECLARE_METATYPE(Room*)
 
 int main(int argc, char *argv[])
 {
-    // SailfishApp::main() will display "qml/template.qml", if you need more
-    // control over initialization, you can use:
-    //
-    //   - SailfishApp::application(int, char *[]) to get the QGuiApplication *
-    //   - SailfishApp::createView() to get a new QQuickView * instance
-    //   - SailfishApp::pathTo(QString) to get a QUrl to a resource file
-    //
-    // To display the view, call "show()" (will show fullscreen on device).
-
     QScopedPointer<QGuiApplication> application(SailfishApp::application(argc, argv));
     application->setApplicationName("harbour-matrix");
     application->setApplicationVersion("0.1");
-    /*application->addLibraryPath(QString("%1/../share/%2/lib").arg(qApp->applicationDirPath(), qApp->applicationName()));
-
-    QStringList args = application->arguments();
-    bool daemonized = args.contains("-daemon");
-
-    if(daemonized && !SailorGram::hasDaemonFile())
-        return 0;
-
-    QDBusConnection sessionbus = QDBusConnection::sessionBus();
-
-    if(sessionbus.interface()->isServiceRegistered(SailorgramInterface::INTERFACE_NAME)) // Only a Single Instance is allowed
-    {
-        SailorgramInterface::sendWakeUp();
-
-        if(application->hasPendingEvents())
-            application->processEvents();
-
-        return 0;
-    }*/
-
     qmlRegisterType<SyncJob>(); qRegisterMetaType<SyncJob*> ("SyncJob*");
     qmlRegisterType<Room>();    qRegisterMetaType<Room*>    ("Room*");
     qmlRegisterType<User>();    qRegisterMetaType<User*>    ("User*");
@@ -102,14 +73,7 @@ int main(int argc, char *argv[])
     //engine->addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
 
     view->setSource(SailfishApp::pathTo("qml/harbour-matrix.qml"));
-
-    //if(daemonized)
-    //    application->setQuitOnLastWindowClosed(false);
-    //else
-        view->show();
+    view->show();
 
     return application->exec();
-
-    //return SailfishApp::main(argc, argv);
-
 }

@@ -16,17 +16,33 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_JOINSTATE_H
-#define QMATRIXCLIENT_JOINSTATE_H
+#pragma once
+
+#include <QtCore/QFlags>
+
+#include <array>
 
 namespace QMatrixClient
 {
     enum class JoinState
     {
-        Join,
-        Invite,
-        Leave
+        Join = 0x1,
+        Invite = 0x2,
+        Leave = 0x4
     };
-}
 
-#endif // QMATRIXCLIENT_JOINSTATE_H
+    Q_DECLARE_FLAGS(JoinStates, JoinState)
+
+    // We cannot use REGISTER_ENUM outside of a Q_OBJECT and besides, we want
+    // to use strings that match respective JSON keys.
+    static const std::array<const char*, 3> JoinStateStrings
+        { { "join", "invite", "leave" } };
+
+    inline const char* toCString(JoinState js)
+    {
+        size_t state = size_t(js), index = 0;
+        while (state >>= 1) ++index;
+        return JoinStateStrings[index];
+    }
+}  // namespace QMatrixClient
+Q_DECLARE_OPERATORS_FOR_FLAGS(QMatrixClient::JoinStates)

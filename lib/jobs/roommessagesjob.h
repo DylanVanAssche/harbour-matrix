@@ -16,8 +16,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_ROOMMESSAGESJOB_H
-#define QMATRIXCLIENT_ROOMMESSAGESJOB_H
+#pragma once
 
 #include "basejob.h"
 
@@ -25,28 +24,24 @@
 
 namespace QMatrixClient
 {
-    class Room;
-
-    enum class FetchDirectory { Backwards, Forward };
+    enum class FetchDirection { Backward, Forward };
 
     class RoomMessagesJob: public BaseJob
     {
         public:
-            RoomMessagesJob(ConnectionData* data, Room* room, QString from, FetchDirectory dir = FetchDirectory::Backwards, int limit=10);
+            RoomMessagesJob(const QString& roomId, const QString& from,
+                            int limit = 10,
+                            FetchDirection dir = FetchDirection::Backward);
             virtual ~RoomMessagesJob();
 
-            Events events();
-            QString end();
+            RoomEvents&& releaseEvents();
+            QString end() const;
 
         protected:
-            QString apiPath() const override;
-            QUrlQuery query() const override;
             Status parseJson(const QJsonDocument& data) override;
 
         private:
             class Private;
             Private* d;
     };
-}
-
-#endif // QMATRIXCLIENT_ROOMMESSAGESJOB_H
+}  // namespace QMatrixClient

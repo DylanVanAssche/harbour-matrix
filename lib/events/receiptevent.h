@@ -16,41 +16,35 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_RECEIPTEVENT_H
-#define QMATRIXCLIENT_RECEIPTEVENT_H
+#pragma once
 
 #include "event.h"
 
-#include <QtCore/QStringList>
-
 namespace QMatrixClient
 {
-    class Receipt
+    struct Receipt
     {
-        public:
-            QString eventId;
-            QString userId;
-            QDateTime timestamp;
+        QString userId;
+        QDateTime timestamp;
     };
-    using Receipts = QVector<Receipt>;
+    struct ReceiptsForEvent
+    {
+        QString evtId;
+        QVector<Receipt> receipts;
+    };
+    using EventsWithReceipts = QVector<ReceiptsForEvent>;
 
     class ReceiptEvent: public Event
     {
         public:
-            ReceiptEvent();
-            virtual ~ReceiptEvent();
+            explicit ReceiptEvent(const QJsonObject& obj);
 
-            Receipts receiptsForEvent(QString eventId) const;
+            EventsWithReceipts eventsWithReceipts() const
+            { return _eventsWithReceipts; }
 
-            QStringList events() const;
-
-            static ReceiptEvent* fromJson(const QJsonObject& obj);
+            static constexpr const char* const TypeId = "m.receipt";
 
         private:
-            class Private;
-            Private* d;
+            EventsWithReceipts _eventsWithReceipts;
     };
-}
-Q_DECLARE_TYPEINFO(QMatrixClient::Receipt, Q_MOVABLE_TYPE);
-
-#endif // QMATRIXCLIENT_RECEIPTEVENT_H
+}  // namespace QMatrixClient

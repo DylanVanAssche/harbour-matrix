@@ -17,36 +17,11 @@
  */
 
 #include "postreceiptjob.h"
-#include "../room.h"
-#include "../connectiondata.h"
-
-#include <QtNetwork/QNetworkReply>
 
 using namespace QMatrixClient;
 
-class PostReceiptJob::Private
-{
-    public:
-        Private() {}
-
-        QString roomId;
-        QString eventId;
-};
-
-PostReceiptJob::PostReceiptJob(ConnectionData* connection, QString roomId, QString eventId)
-    : BaseJob(connection, JobHttpType::PostJob, "PostReceiptJob")
-    , d(new Private)
-{
-    d->roomId = roomId;
-    d->eventId = eventId;
-}
-
-PostReceiptJob::~PostReceiptJob()
-{
-    delete d;
-}
-
-QString PostReceiptJob::apiPath() const
-{
-    return QString("/_matrix/client/r0/rooms/%1/receipt/m.read/%2").arg(d->roomId).arg(d->eventId);
-}
+PostReceiptJob::PostReceiptJob(const QString& roomId, const QString& eventId)
+    : BaseJob(HttpVerb::Post, "PostReceiptJob",
+              QStringLiteral("/_matrix/client/r0/rooms/%1/receipt/m.read/%2")
+                  .arg(roomId, eventId))
+{ }

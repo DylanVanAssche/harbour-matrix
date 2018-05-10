@@ -16,72 +16,84 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_SYNCJOB_H
-#define QMATRIXCLIENT_SYNCJOB_H
+#pragma once
 
 #include "basejob.h"
 
-#include "../joinstate.h"
-#include "../events/event.h"
+#include "joinstate.h"
+#include "events/event.h"
+#include "util.h"
 
 namespace QMatrixClient
 {
+    template <typename EventT>
+    class SyncBatch : public EventsBatch<EventT>
+    {
+        public:
+            explicit SyncBatch(QString k) : jsonKey(std::move(k)) { }
+            void fromJson(const QJsonObject& roomContents)
+            {
+                EventsBatch<EventT>::fromJson(
+                            roomContents[jsonKey].toObject(), "events");
+            }
+
+        private:
+            QString jsonKey;
+    };
+
     class SyncRoomData
     {
-    public:
-        class EventList : public Events
-        {
-            private:
-                QString jsonKey;
-            public:
-                explicit EventList(QString k) : jsonKey(k) { }
-                void fromJson(const QJsonObject& roomContents);
-        };
+        public:
+            QString roomId;
+            JoinState joinState;
+            SyncBatch<RoomEvent> state;
+            SyncBatch<RoomEvent> timeline;
+            SyncBatch<Event> ephemeral;
+            SyncBatch<Event> accountData;
 
-        QString roomId;
-        JoinState joinState;
-        EventList state;
-        EventList timeline;
-        EventList ephemeral;
-        EventList accountData;
-        EventList inviteState;
+            bool timelineLimited;
+            QString timelinePrevBatch;
+            int unreadCount;
+            int highlightCount;
+            int notificationCount;
 
-        bool timelineLimited;
-        QString timelinePrevBatch;
-        int highlightCount;
-        int notificationCount;
+            SyncRoomData(const QString& roomId, JoinState joinState_,
+                         const QJsonObject& room_);
+            SyncRoomData(SyncRoomData&&) = default;
+            SyncRoomData& operator=(SyncRoomData&&) = default;
 
-        SyncRoomData(QString roomId_ = QString(),
-                     JoinState joinState_ = JoinState::Join,
-                     const QJsonObject& room_ = QJsonObject());
+            static const QString UnreadCountKey;
     };
-    using SyncData = QVector<SyncRoomData>;
+    // QVector cannot work with non-copiable objects, std::vector can.
+    using SyncDataList = std::vector<SyncRoomData>;
 
-    class ConnectionData;
+    class SyncData
+    {
+        public:
+            BaseJob::Status parseJson(const QJsonDocument &data);
+            SyncBatch<Event>&& takeAccountData();
+            SyncDataList&& takeRoomData();
+            QString nextBatch() const;
+
+        private:
+            QString nextBatch_;
+            SyncBatch<Event> accountData { "account_data" };
+            SyncDataList roomData;
+    };
+
     class SyncJob: public BaseJob
     {
         public:
-            SyncJob(ConnectionData* connection, QString since=QString());
-            virtual ~SyncJob();
-            
-            void setFilter(QString filter);
-            void setFullState(bool full);
-            void setPresence(QString presence);
-            void setTimeout(int timeout);
+            explicit SyncJob(const QString& since = {},
+                             const QString& filter = {},
+                             int timeout = -1, const QString& presence = {});
 
-            const SyncData& roomData() const;
-            QString nextBatch() const;
+            SyncData &&takeData() { return std::move(d); }
 
         protected:
-            QString apiPath() const override;
-            QUrlQuery query() const override;
             Status parseJson(const QJsonDocument& data) override;
 
         private:
-            class Private;
-            Private* d;
+            SyncData d;
     };
-}
-Q_DECLARE_TYPEINFO(QMatrixClient::SyncRoomData, Q_MOVABLE_TYPE);
-
-#endif // QMATRIXCLIENT_SYNCJOB_H
+}  // namespace QMatrixClient

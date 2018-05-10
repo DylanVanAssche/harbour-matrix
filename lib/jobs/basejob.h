@@ -16,14 +16,17 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_BASEJOB_H
-#define QMATRIXCLIENT_BASEJOB_H
+#pragma once
+
+#include "../logging.h"
+#include "requestdata.h"
 
 #include <QtCore/QObject>
+#include <QtCore/QUrlQuery>
+
+// Any job that parses the response will need the below two.
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
-#include <QtCore/QUrlQuery>
-#include <QtCore/QScopedPointer>
 
 class QNetworkReply;
 class QSslError;
@@ -32,23 +35,57 @@ namespace QMatrixClient
 {
     class ConnectionData;
 
-    enum class JobHttpType { GetJob, PutJob, PostJob };
-    
+    enum class HttpVerb { Get, Put, Post, Delete };
+
+    struct JobTimeoutConfig
+    {
+        int jobTimeout;
+        int nextRetryInterval;
+    };
+
     class BaseJob: public QObject
     {
             Q_OBJECT
+            Q_PROPERTY(int maxRetries READ maxRetries WRITE setMaxRetries)
         public:
             /* Just in case, the values are compatible with KJob
              * (which BaseJob used to inherit from). */
             enum StatusCode { NoError = 0 // To be compatible with Qt conventions
                 , Success = 0
-                , ErrorLevel = 100 // Errors have codes starting from this
+                , Pending = 1
+                , WarningLevel = 20
+                , UnexpectedResponseTypeWarning = 21
+                , Abandoned = 50 //< A very brief period between abandoning and object deletion
+                , ErrorLevel = 100 //< Errors have codes starting from this
                 , NetworkError = 100
                 , JsonParseError
                 , TimeoutError
                 , ContentAccessError
+                , NotFoundError
+                , IncorrectRequestError
+                , IncorrectResponseError
+                , TooManyRequestsError
+                , RequestNotImplementedError
+                , NetworkAuthRequiredError
                 , UserDefinedError = 200
             };
+
+            /**
+             * A simple wrapper around QUrlQuery that allows its creation from
+             * a list of string pairs
+             */
+            class Query : public QUrlQuery
+            {
+                public:
+                    using QUrlQuery::QUrlQuery;
+                    Query() = default;
+                    Query(const std::initializer_list< QPair<QString, QString> >& l)
+                    {
+                        setQueryItems(l);
+                    }
+            };
+
+            using Data = RequestData;
 
             /**
              * This structure stores the status of a server call job. The status consists
@@ -63,20 +100,47 @@ namespace QMatrixClient
             {
                 public:
                     Status(StatusCode c) : code(c) { }
-                    Status(int c, QString m) : code(c), message(m) { }
+                    Status(int c, QString m) : code(c), message(std::move(m)) { }
 
                     bool good() const { return code < ErrorLevel; }
+                    friend QDebug operator<<(QDebug dbg, const Status& s)
+                    {
+                        QDebugStateSaver _s(dbg);
+                        return dbg.noquote().nospace()
+                                << s.code << ": " << s.message;
+                    }
 
                     int code;
                     QString message;
             };
 
-        public:
-            BaseJob(ConnectionData* connection, JobHttpType type,
-                    QString name, bool needsToken=true);
-            virtual ~BaseJob();
+            using duration_t = int; // milliseconds
 
-            void start();
+        public:
+            BaseJob(HttpVerb verb, const QString& name, const QString& endpoint,
+                    bool needsToken = true);
+            BaseJob(HttpVerb verb, const QString& name, const QString& endpoint,
+                    const Query& query, Data&& data = {},
+                    bool needsToken = true);
+
+            Status status() const;
+            int error() const;
+            virtual QString errorString() const;
+
+            int maxRetries() const;
+            void setMaxRetries(int newMaxRetries);
+
+            Q_INVOKABLE duration_t getCurrentTimeout() const;
+            Q_INVOKABLE duration_t getNextRetryInterval() const;
+            Q_INVOKABLE duration_t millisToRetry() const;
+
+            friend QDebug operator<<(QDebug dbg, const BaseJob* j)
+            {
+                return dbg << j->objectName();
+            }
+
+        public slots:
+            void start(const ConnectionData* connData);
 
             /**
              * Abandons the result of this job, arrived or unarrived.
@@ -87,17 +151,27 @@ namespace QMatrixClient
              */
             void abandon();
 
-            Status status() const;
-            int error() const;
-            virtual QString errorString() const;
-
         signals:
+            /** The job is about to send a network request */
+            void aboutToStart();
+
+            /** The job has sent a network request */
+            void started();
+
+            /**
+             * The previous network request has failed; the next attempt will
+             * be done in the specified time
+             * @param nextAttempt the 1-based number of attempt (will always be more than 1)
+             * @param inMilliseconds the interval after which the next attempt will be taken
+             */
+            void retryScheduled(int nextAttempt, int inMilliseconds);
+
             /**
              * Emitted when the job is finished, in any case. It is used to notify
              * observers that the job is terminated and that progress can be hidden.
              *
              * This should not be emitted directly by subclasses;
-             * use emitResult() instead.
+             * use finishJob() instead.
              *
              * In general, to be notified of a job's completion, client code
              * should connect to success() and failure()
@@ -107,7 +181,6 @@ namespace QMatrixClient
              * to avoid dangling pointers in your list.
              *
              * @param job the job that emitted this signal
-             * @internal
              *
              * @see success, failure
              */
@@ -116,7 +189,7 @@ namespace QMatrixClient
             /**
              * Emitted when the job is finished (except when killed).
              *
-             * Use error to know if the job was finished with error.
+             * Use error() to know if the job was finished with error.
              *
              * @param job the job that emitted this signal
              *
@@ -135,16 +208,41 @@ namespace QMatrixClient
              */
             void failure(BaseJob*);
 
-        protected:
-            ConnectionData* connection() const;
+            void downloadProgress(qint64 bytesReceived, qint64 bytesTotal);
+            void uploadProgress(qint64 bytesSent, qint64 bytesTotal);
 
-            // to implement
-            virtual QString apiPath() const = 0;
-            virtual QUrlQuery query() const;
-            virtual QJsonObject data() const;
+        protected:
+            using headers_t = QHash<QByteArray, QByteArray>;
+
+            const QString& apiEndpoint() const;
+            void setApiEndpoint(const QString& apiEndpoint);
+            const headers_t& requestHeaders() const;
+            void setRequestHeader(const headers_t::key_type& headerName,
+                                  const headers_t::mapped_type& headerValue);
+            void setRequestHeaders(const headers_t& headers);
+            const QUrlQuery& query() const;
+            void setRequestQuery(const QUrlQuery& query);
+            const Data& requestData() const;
+            void setRequestData(Data&& data);
+            const QByteArrayList& expectedContentTypes() const;
+            void addExpectedContentType(const QByteArray& contentType);
+            void setExpectedContentTypes(const QByteArrayList& contentTypes);
+
+            /** Construct a URL out of baseUrl, path and query
+             * The function automatically adds '/' between baseUrl's path and
+             * \p path if necessary. The query component of \p baseUrl
+             * is ignored.
+             */
+            static QUrl makeRequestUrl(QUrl baseUrl, const QString& path,
+                                       const QUrlQuery& query = {});
+
+            virtual void beforeStart(const ConnectionData* connData);
+            virtual void afterStart(const ConnectionData* connData,
+                                    QNetworkReply* reply);
+            virtual void beforeAbandon(QNetworkReply*);
 
             /**
-             * Used by gotReply() slot to check the received reply for general
+             * Used by gotReply() to check the received reply for general
              * issues such as network errors or access denial.
              * Returning anything except NoError/Success prevents
              * further parseReply()/parseJson() invocation.
@@ -154,17 +252,17 @@ namespace QMatrixClient
              *
              * @see gotReply
              */
-            virtual Status checkReply(QNetworkReply* reply) const;
+            virtual Status doCheckReply(QNetworkReply* reply) const;
 
             /**
              * Processes the reply. By default, parses the reply into
              * a QJsonDocument and calls parseJson() if it's a valid JSON.
              *
-             * @param data raw contents of a HTTP reply from the server (without headers)
+             * @param reply raw contents of a HTTP reply from the server (without headers)
              *
              * @see gotReply, parseJson
              */
-            virtual Status parseReply(QByteArray data);
+            virtual Status parseReply(QNetworkReply* reply);
 
             /**
              * Processes the JSON document received from the Matrix server.
@@ -175,23 +273,36 @@ namespace QMatrixClient
              * @see parseReply
              */
             virtual Status parseJson(const QJsonDocument&);
-            
+
             void setStatus(Status s);
             void setStatus(int code, QString message);
 
+            // Q_DECLARE_LOGGING_CATEGORY return different function types
+            // in different versions
+            using LoggingCategory = decltype(JOBS)*;
+            void setLoggingCategory(LoggingCategory lcf);
+
+            // Job objects should only be deleted via QObject::deleteLater
+            ~BaseJob() override;
+
         protected slots:
             void timeout();
-            void sslErrors(const QList<QSslError>& errors);
 
         private slots:
+            void sendRequest();
+            void checkReply();
             void gotReply();
 
         private:
-            void finishJob(bool emitResult);
+            void stop();
+            void finishJob();
 
             class Private;
             QScopedPointer<Private> d;
     };
-}
 
-#endif // QMATRIXCLIENT_BASEJOB_H
+    inline bool isJobRunning(BaseJob* job)
+    {
+        return job && job->error() == BaseJob::Pending;
+    }
+}  // namespace QMatrixClient

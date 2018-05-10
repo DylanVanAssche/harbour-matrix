@@ -16,36 +16,32 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_MEDIATHUMBNAILJOB_H
-#define QMATRIXCLIENT_MEDIATHUMBNAILJOB_H
+#pragma once
 
-#include "basejob.h"
+#include "generated/content-repo.h"
 
 #include <QtGui/QPixmap>
 
 namespace QMatrixClient
 {
-    enum class ThumbnailType {Crop, Scale};
-
-    class MediaThumbnailJob: public BaseJob
+    class MediaThumbnailJob: public GetContentThumbnailJob
     {
         public:
-            MediaThumbnailJob(ConnectionData* data, QUrl url, int requestedWidth, int requestedHeight,
-                              ThumbnailType thumbnailType=ThumbnailType::Scale);
-            virtual ~MediaThumbnailJob();
+            using GetContentThumbnailJob::makeRequestUrl;
+            static QUrl makeRequestUrl(QUrl baseUrl,
+                                       const QUrl& mxcUri, QSize requestedSize);
 
-            QPixmap thumbnail();
+            MediaThumbnailJob(const QString& serverName, const QString& mediaId,
+                              QSize requestedSize);
+            MediaThumbnailJob(const QUrl& mxcUri, QSize requestedSize);
+
+            QImage thumbnail() const;
+            QImage scaledThumbnail(QSize toSize) const;
 
         protected:
-            QString apiPath() const override;
-            QUrlQuery query() const override;
-
-            Status parseReply(QByteArray data) override;
+            Status parseReply(QNetworkReply* reply) override;
 
         private:
-            class Private;
-            Private* d;
+            QImage _thumbnail;
     };
-}
-
-#endif // QMATRIXCLIENT_MEDIATHUMBNAILJOB_H
+}  // namespace QMatrixClient

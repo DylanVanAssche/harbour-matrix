@@ -16,31 +16,25 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_JOINROOMJOB_H
-#define QMATRIXCLIENT_JOINROOMJOB_H
+#pragma once
 
 #include "basejob.h"
 
 namespace QMatrixClient
 {
-    class ConnectionData;
-
     class JoinRoomJob: public BaseJob
     {
         public:
-            JoinRoomJob(ConnectionData* data, QString roomAlias);
+            explicit JoinRoomJob(const QString& roomAlias);
             virtual ~JoinRoomJob();
 
             QString roomId();
 
-            protected:
-                QString apiPath() const override;
-                Status parseJson(const QJsonDocument& data) override;
+        protected:
+            Status parseJson(const QJsonDocument& data) override;
 
-            private:
-                class Private;
-                Private* d;
+        private:
+            class Private;
+            Private* d;
     };
-}
-
-#endif // QMATRIXCLIENT_JOINROOMJOB_H
+}  // namespace QMatrixClient

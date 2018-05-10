@@ -16,34 +16,27 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef QMATRIXCLIENT_PASSWORDLOGIN_H
-#define QMATRIXCLIENT_PASSWORDLOGIN_H
+#pragma once
 
 #include "basejob.h"
 
 namespace QMatrixClient
 {
-    class ConnectionData;
-
     class PasswordLogin : public BaseJob
     {
         public:
-            PasswordLogin(ConnectionData* connection, QString user, QString password);
+            PasswordLogin(QString user, QString password);
             virtual ~PasswordLogin();
 
-            QString token();
-            QString id();
-            QString server();
+            QString token() const;
+            QString id() const;
+            QString server() const;
 
         protected:
-            QString apiPath() const override;
-            QJsonObject data() const override;
             Status parseJson(const QJsonDocument& data) override;
 
         private:
             class Private;
             Private* d;
     };
-}
-
-#endif // QMATRIXCLIENT_PASSWORDLOGIN_H
+}  // namespace QMatrixClient

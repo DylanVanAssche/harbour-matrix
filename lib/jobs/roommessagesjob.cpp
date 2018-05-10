@@ -17,35 +17,28 @@
  */
 
 #include "roommessagesjob.h"
-#include "../room.h"
-
-#include <QtCore/QJsonObject>
-#include <QtCore/QJsonArray>
 
 using namespace QMatrixClient;
 
 class RoomMessagesJob::Private
 {
     public:
-        Private() {}
-
-        Room* room;
-        QString from;
-        FetchDirectory dir;
-        int limit;
-
-        Events events;
+        RoomEvents events;
         QString end;
 };
 
-RoomMessagesJob::RoomMessagesJob(ConnectionData* data, Room* room, QString from, FetchDirectory dir, int limit)
-    : BaseJob(data, JobHttpType::GetJob, "RoomMessagesJob")
+RoomMessagesJob::RoomMessagesJob(const QString& roomId, const QString& from,
+                                 int limit, FetchDirection dir)
+    : BaseJob(HttpVerb::Get, "RoomMessagesJob",
+              QStringLiteral("/_matrix/client/r0/rooms/%1/messages").arg(roomId),
+              Query(
+                { { "from", from }
+                , { "dir", dir == FetchDirection::Backward ? "b" : "f" }
+                , { "limit", QString::number(limit) }
+                }))
+    , d(new Private)
 {
-    d = new Private();
-    d->room = room;
-    d->from = from;
-    d->dir = dir;
-    d->limit = limit;
+    qCDebug(JOBS) << "Room messages query:" << query().toString(QUrl::PrettyDecoded);
 }
 
 RoomMessagesJob::~RoomMessagesJob()
@@ -53,37 +46,20 @@ RoomMessagesJob::~RoomMessagesJob()
     delete d;
 }
 
-Events RoomMessagesJob::events()
+RoomEvents&& RoomMessagesJob::releaseEvents()
 {
-    return d->events;
+    return move(d->events);
 }
 
-QString RoomMessagesJob::end()
+QString RoomMessagesJob::end() const
 {
     return d->end;
 }
 
-QString RoomMessagesJob::apiPath() const
-{
-    return QString("/_matrix/client/r0/rooms/%1/messages").arg(d->room->id());
-}
-
-QUrlQuery RoomMessagesJob::query() const
-{
-    QUrlQuery query;
-    query.addQueryItem("from", d->from);
-    if( d->dir == FetchDirectory::Backwards )
-        query.addQueryItem("dir", "b");
-    else
-        query.addQueryItem("dir", "f");
-    query.addQueryItem("limit", QString::number(d->limit));
-    return query;
-}
-
 BaseJob::Status RoomMessagesJob::parseJson(const QJsonDocument& data)
 {
-    QJsonObject obj = data.object();
-    d->events = eventsFromJson(obj.value("chunk").toArray());
+    const auto obj = data.object();
+    d->events.fromJson(obj, "chunk");
     d->end = obj.value("end").toString();
     return Success;
 }

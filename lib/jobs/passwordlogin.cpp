@@ -18,32 +18,26 @@
 
 #include "passwordlogin.h"
 
-#include <QtCore/QJsonDocument>
-#include <QtCore/QJsonObject>
-#include <QtNetwork/QNetworkReply>
-
-#include "../connectiondata.h"
-
 using namespace QMatrixClient;
 
 class PasswordLogin::Private
 {
     public:
-        Private() {}
-
-        QString user;
-        QString password;
         QString returned_id;
         QString returned_server;
         QString returned_token;
 };
 
-PasswordLogin::PasswordLogin(ConnectionData* connection, QString user, QString password)
-    : BaseJob(connection, JobHttpType::PostJob, "PasswordLogin", false)
+PasswordLogin::PasswordLogin(QString user, QString password)
+    : BaseJob(HttpVerb::Post, "PasswordLogin",
+              "_matrix/client/r0/login", Query(), Data(), false)
     , d(new Private)
 {
-    d->user = user;
-    d->password = password;
+    QJsonObject _data;
+    _data.insert("type", QStringLiteral("m.login.password"));
+    _data.insert("user", user);
+    _data.insert("password", password);
+    setRequestData(_data);
 }
 
 PasswordLogin::~PasswordLogin()
@@ -51,33 +45,19 @@ PasswordLogin::~PasswordLogin()
     delete d;
 }
 
-QString PasswordLogin::token()
+QString PasswordLogin::token() const
 {
     return d->returned_token;
 }
 
-QString PasswordLogin::id()
+QString PasswordLogin::id() const
 {
     return d->returned_id;
 }
 
-QString PasswordLogin::server()
+QString PasswordLogin::server() const
 {
     return d->returned_server;
-}
-
-QString PasswordLogin::apiPath() const
-{
-    return "_matrix/client/r0/login";
-}
-
-QJsonObject PasswordLogin::data() const
-{
-    QJsonObject json;
-    json.insert("type", QLatin1String("m.login.password"));
-    json.insert("user", d->user);
-    json.insert("password", d->password);
-    return json;
 }
 
 BaseJob::Status PasswordLogin::parseJson(const QJsonDocument& data)
